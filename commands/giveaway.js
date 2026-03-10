@@ -6,10 +6,28 @@ const {
     ButtonStyle
 } = require('discord.js');
 
-// GLOBALNA pamięć giveawayów (współdzielona z reroll.js)
 const giveaways = new Map();
 
-// funkcja parsowania czasu
+// Formatowanie czasu (ładne)
+function formatTime(ms) {
+    let seconds = Math.floor(ms / 1000);
+    const days = Math.floor(seconds / 86400);
+    seconds %= 86400;
+    const hours = Math.floor(seconds / 3600);
+    seconds %= 3600;
+    const minutes = Math.floor(seconds / 60);
+    seconds %= 60;
+
+    let parts = [];
+    if (days > 0) parts.push(`${days}d`);
+    if (hours > 0) parts.push(`${hours}h`);
+    if (minutes > 0) parts.push(`${minutes}m`);
+    parts.push(`${seconds}s`);
+
+    return parts.join(' ');
+}
+
+// Parsowanie czasu
 function parseTime(input) {
     const match = input.match(/^(\d+)(s|m|h|d)$/);
     if (!match) return null;
@@ -27,7 +45,7 @@ function parseTime(input) {
 }
 
 module.exports = {
-    giveaways, // ← NAJWAŻNIEJSZE, żeby reroll działał
+    giveaways,
 
     data: new SlashCommandBuilder()
         .setName('giveaway')
@@ -68,7 +86,7 @@ module.exports = {
             .setColor('#9b59b6')
             .addFields(
                 { name: '🏆 Nagroda', value: nagroda },
-                { name: '⏰ Pozostały czas', value: czasInput, inline: true },
+                { name: '⏰ Pozostały czas', value: formatTime(duration), inline: true },
                 { name: '👑 Zwycięzców', value: `${zwyciezcy}`, inline: true },
                 { name: '👥 Uczestnicy', value: '0', inline: true },
             )
@@ -104,12 +122,17 @@ module.exports = {
             const remaining = data.endTimestamp - Date.now();
             if (remaining <= 0) return;
 
-            const seconds = Math.floor(remaining / 1000);
+            const updatedEmbed = EmbedBuilder.from(message.embeds[0]);
 
-            const updatedEmbed = EmbedBuilder.from(embed);
-            updatedEmbed.data.fields[1].value = `${seconds}s`;
+            updatedEmbed.data.fields[1].value = formatTime(remaining);
+            updatedEmbed.data.fields[3].value = `${data.users.size}`;
 
-            await message.edit({ embeds: [updatedEmbed], components: [row] });
+            try {
+                await message.edit({ embeds: [updatedEmbed], components: [row] });
+            } catch {
+                clearInterval(interval);
+                giveaways.delete(message.id);
+            }
         }, 5000);
 
         // ====== LOSOWANIE ======
@@ -123,6 +146,19 @@ module.exports = {
 
             const channel = await client.channels.fetch(data.channelId).catch(() => null);
             if (!channel) return;
+
+            // Wyłączenie przycisku
+            const disabledRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('join_giveaway')
+                    .setLabel('Giveaway zakończony')
+                    .setStyle(ButtonStyle.Secondary)
+                    .setDisabled(true)
+            );
+
+            try {
+                await message.edit({ components: [disabledRow] });
+            } catch {}
 
             if (usersArray.length === 0) {
                 await channel.send('🎉 Giveaway zakończony — brak uczestników.');
@@ -151,7 +187,7 @@ module.exports = {
 
             await channel.send({ content: `🎉 Gratulacje ${winnersMention}!`, embeds: [resultEmbed] });
 
-            // giveaways.delete(message.id);
+            giveaways.delete(message.id);
         }, duration);
     },
 
